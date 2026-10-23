@@ -1,10 +1,12 @@
 // Sur une annonce Vinted, Leboncoin ou eBay : reconnaît le modèle parmi tes surveillances,
-// et affiche un encadré avec le prix de revente estimé et la marge.
+// tient compte de l'état, enregistre l'annonce dans ta base et affiche la marge possible.
 (() => {
   const PAGES_ANNONCE = [/vinted\.fr\/items\/\d+/, /leboncoin\.fr\/(ad\/|.*\d+\.htm)/, /ebay\.fr\/itm\//];
   const SELECTEURS_PRIX = ['[data-testid="item-price"]', '[data-qa-id="adview_price"]', ".x-price-primary", '[itemprop="price"]'];
   const SELECTEURS_TITRE = ['h1[data-qa-id="adview_title"]', "h1.x-item-title__mainTitle", "h1"];
   const SELECTEURS_MARQUE = ['[itemprop="brand"]', '[data-testid="item-attributes-brand"]'];
+  const SELECTEURS_ETAT = ['[data-testid="item-attributes-status"] [itemprop="status"]', ".x-item-condition-text .ux-textspans", '[data-testid="x-item-condition"]'];
+  const LIBELLE_ETAT = /^(é|e)tat( de l'(objet|article))?\s*:?$/i;
   let analyse = null;
   let derniereUrl = "";
 
@@ -35,7 +37,40 @@
     const marque = SELECTEURS_MARQUE.map(texte).find(Boolean) || "";
     let prix = prixJsonLd() || lirePrix(meta("product:price:amount"));
     if (!prix) prix = SELECTEURS_PRIX.map((s) => lirePrix(texte(s))).find((p) => p > 0) || 0;
-    return { titre, marque, prix };
+    return { titre, marque, prix, etat: lireEtat(), image: meta("og:image") };
+  }
+
+  // L'état est souvent affiché comme « État » suivi de sa valeur dans l'élément voisin.
+  function lireEtat() {
+    const direct = SELECTEURS_ETAT.map(texte).find(Boolean);
+    if (direct) return direct;
+    for (const el of document.querySelectorAll("span, div, dt, th, p, li, h2, h3")) {
+      if (el.children.length > 1 || !LIBELLE_ETAT.test(el.textContent.trim())) continue;
+      const voisin = el.nextElementSibling?.textContent?.trim();
+      if (voisin) return voisin;
+      const parent = el.parentElement?.textContent?.replace(el.textContent, "").trim();
+      if (parent && parent.length < 60) return parent;
+    }
+    return "";
+  }
+
+  function plateformeCourante() {
+    return location.hostname.includes("vinted") ? "Vinted" : location.hostname.includes("leboncoin") ? "Leboncoin" : "eBay";
+  }
+
+  async function enregistrer(fiche) {
+    const reponse = await chrome.runtime.sendMessage({ type: "consultation", fiche });
+    return reponse?.erreur ? null : reponse;
+  }
+
+  function ligneBase(enreg) {
+    if (!enreg) return `<p class="discret">⚠ Annonce non enregistrée dans ta base.</p>`;
+    const s = enreg.stats;
+    const observe = s?.n
+      ? `<div class="ligne"><span>Prix observé (${s.n} annonce${s.n > 1 ? "s" : ""})</span><span>${euros(s.mediane)}</span></div>
+         <p class="discret">De ${euros(s.min)} à ${euros(s.max)} dans les annonces que tu as vues.</p>`
+      : "";
+    return `${observe}<p class="discret">✓ ${enreg.dejaVue ? "Déjà vue, mise à jour" : "Enregistrée"} dans ta base (${enreg.total} annonces).</p>`;
   }
 
   // Frais payés par l'acheteur en plus du prix (approximation de la protection acheteurs Vinted).
@@ -81,8 +116,10 @@
       return;
     }
     analyse ||= await import(chrome.runtime.getURL("analyse.mjs"));
-    const { titre, marque, prix } = lireAnnonce();
+    const { titre, marque, prix, etat, image } = lireAnnonce();
     if (!titre) return;
+    const evalEtat = analyse.evaluerEtat(etat || titre);
+    const fiche = { url: location.href.split("?")[0], plateforme: plateformeCourante(), titre: marque && !titre.toLowerCase().includes(marque.toLowerCase()) ? `${marque} ${titre}` : titre, etat: etat || evalEtat.libelle, prix, image };
 
     const reponse = await chrome.runtime.sendMessage({ type: "reglages" });
     if (reponse.erreur) {
@@ -97,30 +134,41 @@
       (marque && analyse.trouverSurveillance(`${marque} ${titre}`, surveillances, exclus));
 
     if (!s) {
+      const enreg = await enregistrer(fiche);
       afficher(`<p>Modèle non reconnu parmi tes ${surveillances.length} modèles surveillés.</p>
+        <div class="ligne"><span>État</span><span>${evalEtat.libelle}</span></div>
+        <div class="ligne"><span>Prix annonce</span><span>${prix ? euros(prix) : "?"}</span></div>
+        ${ligneBase(enreg)}
         <a href="${lienVendus(titre)}" target="_blank">Voir les ventes terminées eBay</a>`, "#6b6b70");
       return;
     }
     if (!prix) {
-      afficher(`<p><b>${s.nom || s.motsCles}</b></p><p class="discret">Prix introuvable sur cette page.</p>`, "#a45a00");
+      const enreg = await enregistrer({ ...fiche, modele: s.nom || s.motsCles });
+      afficher(`<p><b>${s.nom || s.motsCles}</b></p><p class="discret">Prix introuvable sur cette page.</p>${ligneBase(enreg)}`, "#a45a00");
       return;
     }
 
     const plateforme = (r.plateformes || []).find((p) => p.nom === (r.veille?.plateformeRevente || "Vinted")) || { pct: 0, fixe: 0 };
     const frais = fraisAchat(prix);
-    const { marge, margePct } = analyse.estimerMarge({ prix, port: frais, prixRevente: s.prixRevente, plateforme, cotisations: r.cotisations || 0 });
+    // Le prix de revente saisi vaut pour une montre en bon état : on l'ajuste selon l'état de l'annonce.
+    const revente = Math.round(s.prixRevente * evalEtat.coef);
+    const { marge, margePct } = analyse.estimerMarge({ prix, port: frais, prixRevente: revente, plateforme, cotisations: r.cotisations || 0 });
     const seuil = r.veille?.margeMin ?? 20;
     const [verdict, couleur] = marge >= seuil ? ["✓ Bonne affaire", "#1e7a46"] : marge > 0 ? ["≈ Marge faible", "#a45a00"] : ["✗ Pas rentable", "#b3261e"];
-    const prixMaxConseille = s.prixRevente - seuil - frais - (s.prixRevente * (plateforme.pct || 0)) / 100 - (plateforme.fixe || 0) - (s.prixRevente * (r.cotisations || 0)) / 100;
+    const prixMaxConseille = revente - seuil - frais - (revente * (plateforme.pct || 0)) / 100 - (plateforme.fixe || 0) - (revente * (r.cotisations || 0)) / 100;
+    const enreg = await enregistrer({ ...fiche, modele: s.nom || s.motsCles, prixRevente: revente, marge: Math.round(marge) });
 
     afficher(
       `<div><b>${s.nom || s.motsCles}</b></div>
       <div class="verdict">${verdict}</div>
+      <div class="ligne"><span>État</span><span>${evalEtat.libelle}${evalEtat.coef !== 1 ? ` (×${evalEtat.coef})` : ""}</span></div>
+      ${evalEtat.alerte ? `<p class="discret">⚠ ${evalEtat.alerte}</p>` : ""}
       <div class="ligne"><span>Prix annonce</span><span>${euros(prix)}</span></div>
       ${frais ? `<div class="ligne"><span>Frais acheteur ≈</span><span>${euros(frais)}</span></div>` : ""}
-      <div class="ligne"><span>Revente estimée</span><span>${euros(s.prixRevente)}</span></div>
+      <div class="ligne"><span>Revente estimée</span><span>${euros(revente)}</span></div>
       <div class="ligne total"><span>Marge nette</span><span>${euros(marge)} (${Math.round(margePct)} %)</span></div>
       <p class="discret">Hors port. Pour ${euros(seuil)} de marge, ne paie pas plus de <b>${euros(Math.max(0, prixMaxConseille))}</b>.</p>
+      ${ligneBase(enreg)}
       <a href="${lienVendus(s.motsCles)}" target="_blank">Vérifier les ventes terminées eBay</a>`,
       couleur
     );

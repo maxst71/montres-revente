@@ -107,11 +107,13 @@ async function connexion(mdp) {
   $("#app").hidden = false;
   afficherTout();
   chargerVeille();
+  chargerVues();
 }
 
 // ---------- Navigation ----------
 
 function changerOnglet(nom) {
+  if (nom === "vues" && motDePasse) chargerVues();
   document.querySelectorAll("#onglets button").forEach((b) => b.classList.toggle("actif", b.dataset.onglet === nom));
   document.querySelectorAll(".onglet").forEach((s) => (s.hidden = s.id !== nom));
   memoriser("montres-onglet", nom);
@@ -119,6 +121,7 @@ function changerOnglet(nom) {
 
 function afficherTout() {
   afficherAffaires();
+  afficherVues();
   afficherTableau();
   afficherCalcul();
   afficherStock();
@@ -468,6 +471,105 @@ function afficherRegistre() {
     ]);
 }
 
+// ---------- Annonces vues (base de connaissance de l'extension) ----------
+
+let consultations = null;
+
+async function chargerVues() {
+  try {
+    consultations = (await api("consultations")).consultations;
+  } catch {
+    consultations = [];
+  }
+  afficherVues();
+}
+
+function mediane(valeurs) {
+  const v = [...valeurs].sort((a, b) => a - b);
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+function afficherVues() {
+  if (!consultations) {
+    $("#vues").innerHTML = `<h2>Annonces vues</h2><p class="discret">Chargement…</p>`;
+    return;
+  }
+  const filtre = (relire("montres-vues-filtre") || "").toLowerCase();
+  const parModele = new Map();
+  for (const c of consultations) {
+    if (!c.modele || !c.prix) continue;
+    if (!parModele.has(c.modele)) parModele.set(c.modele, []);
+    parModele.get(c.modele).push(c);
+  }
+  const stats = [...parModele.entries()]
+    .map(([modele, liste]) => {
+      const prix = liste.map((c) => c.prix);
+      const surveillance = donnees.reglages.surveillances.find((s) => (s.nom || s.motsCles) === modele);
+      return { modele, n: liste.length, med: mediane(prix), min: Math.min(...prix), max: Math.max(...prix), surveillance };
+    })
+    .sort((a, b) => b.n - a.n);
+  const liste = consultations.filter((c) => !filtre || `${c.titre} ${c.modele}`.toLowerCase().includes(filtre)).slice(0, 200);
+
+  $("#vues").innerHTML = `
+    <h2>Annonces vues</h2>
+    <p class="discret">Chaque annonce que tu ouvres avec l'extension Chrome est enregistrée ici (${consultations.length} au total). Ça te donne les prix réellement demandés pour chaque modèle.</p>
+    <h3>Prix demandés par modèle</h3>
+    ${
+      stats.length
+        ? `<div class="carte tableau-defile"><table>
+          <thead><tr><th>Modèle</th><th class="nombre">Annonces</th><th class="nombre">Prix médian</th><th class="nombre">Min – max</th><th class="nombre">Ta revente estimée</th><th></th></tr></thead>
+          <tbody>${stats
+            .map(
+              (st, i) => `<tr><td>${esc(st.modele)}</td><td class="nombre">${st.n}</td><td class="nombre">${euros(st.med)}</td>
+                <td class="nombre">${euros(st.min)} – ${euros(st.max)}</td>
+                <td class="nombre">${st.surveillance ? euros(st.surveillance.prixRevente) : "—"}</td>
+                <td>${st.surveillance && st.n >= 3 ? `<button class="secondaire" data-mediane="${i}" style="padding:2px 8px;font-size:0.8rem">Utiliser la médiane</button>` : ""}</td></tr>`
+            )
+            .join("")}</tbody></table>
+          <p class="discret">« Utiliser la médiane » remplace ta revente estimée par le prix médian demandé (à partir de 3 annonces). Les prix demandés sont souvent un peu au-dessus des prix de vente réels.</p></div>`
+        : `<div class="carte"><p class="discret">Pas encore de modèle reconnu dans tes annonces vues.</p></div>`
+    }
+    <h3>Dernières annonces</h3>
+    <div class="actions"><input id="vues-filtre" placeholder="Filtrer…" value="${esc(filtre)}" style="max-width:280px"></div>
+    ${
+      liste.length
+        ? `<div class="carte tableau-defile"><table>
+          <thead><tr><th>Vue</th><th>Annonce</th><th>État</th><th class="nombre">Prix</th><th class="nombre">Marge estimée</th></tr></thead>
+          <tbody>${liste
+            .map(
+              (c) => `<tr>
+                <td>${new Date(c.derniereVue).toLocaleDateString("fr-FR")}<br><span class="discret">${esc(c.plateforme)}</span></td>
+                <td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.titre)}</a>${c.modele ? `<br><span class="discret">${esc(c.modele)}</span>` : ""}</td>
+                <td>${esc(c.etat)}</td>
+                <td class="nombre">${euros(c.prix)}${c.prixInitial && c.prixInitial > c.prix ? `<br><span class="positif">baisse : ${euros(c.prixInitial)} → ${euros(c.prix)}</span>` : ""}</td>
+                <td class="nombre ${c.modele ? classeSigne(c.marge) : ""}">${c.modele ? euros(c.marge) : "—"}</td>
+              </tr>`
+            )
+            .join("")}</tbody></table></div>`
+        : `<div class="carte"><p class="discret">Aucune annonce enregistrée. Ouvre des annonces de montres sur Vinted, Leboncoin ou eBay avec l'extension.</p></div>`
+    }`;
+  $("#vues-filtre").oninput = (e) => {
+    memoriser("montres-vues-filtre", e.target.value);
+    clearTimeout(afficherVues.t);
+    afficherVues.t = setTimeout(() => {
+      afficherVues();
+      const champ = $("#vues-filtre");
+      champ.focus();
+      champ.setSelectionRange(champ.value.length, champ.value.length);
+    }, 300);
+  };
+  document.querySelectorAll("#vues [data-mediane]").forEach((b) => {
+    b.onclick = () => {
+      const st = stats[b.dataset.mediane];
+      st.surveillance.prixRevente = Math.round(st.med);
+      sauvegarder();
+      afficherVues();
+      afficherAffaires();
+    };
+  });
+}
+
 // ---------- Bonnes affaires (veille eBay) ----------
 
 let etatVeille = null;
@@ -508,6 +610,8 @@ function afficherAffaires() {
         </div>`;
 
   const alertes = e?.alertes || [];
+  const dejaSurveilles = new Set(r.surveillances.map((s) => s.motsCles.toLowerCase()));
+  const manquants = MODELES.filter((m) => !dejaSurveilles.has(surveillanceDepuisModele(m).motsCles.toLowerCase()));
   $("#affaires").innerHTML = `
     <h2>Bonnes affaires</h2>
     <p class="discret">Toutes les 15 minutes, l'outil cherche sur eBay les nouvelles annonces des modèles que tu surveilles et te prévient sur Telegram quand la marge dépasse ${euros(v.margeMin)}.</p>
@@ -559,7 +663,7 @@ function afficherAffaires() {
         .join("")}</tbody></table>
       <div class="actions">
         <button class="secondaire" id="aff-ajout">+ Ajouter un modèle</button>
-        ${r.surveillances.length ? "" : `<button id="aff-recommandes">Ajouter les ${MODELES.length} modèles recommandés</button>`}
+        ${manquants.length ? `<button id="aff-recommandes">Ajouter les ${manquants.length} modèles recommandés${manquants.length === MODELES.length ? "" : " manquants"}</button>` : ""}
       </div>
     </div>
 
@@ -625,7 +729,7 @@ function afficherAffaires() {
   };
   if ($("#aff-recommandes")) {
     $("#aff-recommandes").onclick = () => {
-      r.surveillances.push(...MODELES.map(surveillanceDepuisModele));
+      r.surveillances.push(...manquants.map(surveillanceDepuisModele));
       sauvegarder();
       afficherAffaires();
     };

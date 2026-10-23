@@ -16,10 +16,26 @@ async function reglagesOutil(forcer = false) {
   return cache;
 }
 
+// Enregistre l'annonce consultée dans la base de l'outil et renvoie les prix observés du modèle.
+async function enregistrerConsultation(fiche) {
+  const { adresse, motDePasse } = await chrome.storage.local.get(["adresse", "motDePasse"]);
+  const r = await fetch(`${adresse.replace(/\/+$/, "")}/api/consultations`, {
+    method: "POST",
+    headers: { "x-password": motDePasse, "content-type": "application/json" },
+    body: JSON.stringify(fiche),
+  });
+  if (!r.ok) throw new Error(`Enregistrement impossible (${r.status}).`);
+  return r.json();
+}
+
 chrome.runtime.onMessage.addListener((message, _expediteur, repondre) => {
-  if (message.type !== "reglages") return false;
-  reglagesOutil(message.forcer)
-    .then((reglages) => repondre({ reglages }))
+  const actions = {
+    reglages: () => reglagesOutil(message.forcer).then((reglages) => ({ reglages })),
+    consultation: () => enregistrerConsultation(message.fiche),
+  };
+  if (!actions[message.type]) return false;
+  actions[message.type]()
+    .then(repondre)
     .catch((e) => repondre({ erreur: e.message }));
   return true;
 });
