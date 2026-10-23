@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>iTech Montres</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⌚</text></svg>">
+</head>
+<body>
+  <section id="ecran-login" class="login" hidden>
+    <form id="form-login" class="carte">
+      <h1>⌚ iTech Montres</h1>
+      <p class="discret">Outil d'achat-revente</p>
+      <label>Mot de passe <input type="password" id="mdp" autocomplete="current-password" required></label>
+      <button type="submit">Entrer</button>
+      <p id="login-erreur" class="erreur" hidden></p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header>
+      <strong>⌚ iTech Montres</strong>
+      <span id="etat-sauvegarde" class="discret"></span>
+    </header>
+    <nav id="onglets">
+      <button data-onglet="tableau" class="actif">Tableau de bord</button>
+      <button data-onglet="calcul">Calculateur</button>
+      <button data-onglet="stock">Stock</button>
+      <button data-onglet="registre">Registre</button>
+      <button data-onglet="modeles">Modèles</button>
+      <button data-onglet="reglages">Réglages</button>
+    </nav>
+    <main>
+      <section id="tableau" class="onglet"></section>
+      <section id="calcul" class="onglet" hidden></section>
+      <section id="stock" class="onglet" hidden></section>
+      <section id="registre" class="onglet" hidden></section>
+      <section id="modeles" class="onglet" hidden></section>
+      <section id="reglages" class="onglet" hidden></section>
+    </main>
+  </div>
+
+  <dialog id="dialogue-montre">
+    <form id="form-montre" method="dialog"></form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
