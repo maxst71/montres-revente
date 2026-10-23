@@ -1,0 +1,16 @@
+// Configuration Cloudflare Workers : appli dans public/, API dans worker.js.
+// Le mot de passe APP_PASSWORD est un secret défini dans le tableau de bord Cloudflare.
+{
+  "name": "montres-revente",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "kv_namespaces": [
+    { "binding": "MONTRES", "id": "bdedd8dbe878460eb612c50f10dfacc0" }
+  ],
+  "keep_vars": true
+}
