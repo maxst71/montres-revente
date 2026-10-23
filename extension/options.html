@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>iTech Montres</title>
+  <style>
+    body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 16px; width: 320px; color: #1d1d1f; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; color: #6b6b70; font-size: 13px; }
+    input { font: inherit; padding: 7px 9px; border: 1px solid #ccc; border-radius: 7px; color: #1d1d1f; }
+    button { font: inherit; padding: 8px 14px; border-radius: 7px; border: 0; background: #1f5f8b; color: #fff; cursor: pointer; }
+    #etat { margin-top: 10px; font-size: 13px; }
+    .ok { color: #1e7a46; } .ko { color: #b3261e; }
+  </style>
+</head>
+<body>
+  <h1>⌚ iTech Montres</h1>
+  <label>Adresse de ton outil <input id="adresse" placeholder="https://montres-revente.xxx.workers.dev"></label>
+  <label>Mot de passe <input id="mdp" type="password"></label>
+  <button id="enregistrer">Enregistrer et tester</button>
+  <p id="etat"></p>
+  <script src="options.js"></script>
+</body>
+</html>

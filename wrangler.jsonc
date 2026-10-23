@@ -1,5 +1,5 @@
 // Configuration Cloudflare Workers : appli dans public/, API dans worker.js.
-// Le mot de passe APP_PASSWORD est un secret défini dans le tableau de bord Cloudflare.
+// Secrets définis dans le tableau de bord Cloudflare : APP_PASSWORD, EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, TELEGRAM_TOKEN.
 {
   "name": "montres-revente",
   "main": "worker.js",
@@ -12,5 +12,6 @@
   "kv_namespaces": [
     { "binding": "MONTRES", "id": "bdedd8dbe878460eb612c50f10dfacc0" }
   ],
+  "triggers": { "crons": ["*/15 * * * *"] },
   "keep_vars": true
 }

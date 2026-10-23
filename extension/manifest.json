@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "iTech Montres – Analyser",
+  "version": "1.0.0",
+  "description": "Affiche sur les annonces Vinted, Leboncoin et eBay le modèle reconnu, le prix de revente estimé et la marge.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*.workers.dev/*", "https://itechstation.fr/*", "https://*.itechstation.fr/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "iTech Montres", "default_popup": "options.html" },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://www.vinted.fr/*", "https://www.leboncoin.fr/*", "https://www.ebay.fr/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["analyse.mjs"], "matches": ["https://www.vinted.fr/*", "https://www.leboncoin.fr/*", "https://www.ebay.fr/*"] }
+  ]
+}

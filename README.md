@@ -2,6 +2,8 @@
 
 Outil personnel de gestion d'achat-revente de montres. Fonctionne sur Cloudflare Pages ou sur Netlify.
 
+- **Bonnes affaires** : toutes les 15 minutes, cherche sur eBay les nouvelles annonces des modèles surveillés et prévient sur Telegram quand la marge est bonne.
+- **Extension Chrome** (dossier `extension/`) : sur une annonce Vinted, Leboncoin ou eBay, affiche le modèle reconnu, la revente estimée et la marge.
 - **Tableau de bord** : bénéfice du mois, stock, argent immobilisé, délai de revente.
 - **Calculateur** : est-ce que cette montre vaut le coup, et à quel prix maximum l'acheter.
 - **Stock** : chaque montre de l'achat à la vente, export CSV.
@@ -11,7 +13,27 @@ Outil personnel de gestion d'achat-revente de montres. Fonctionne sur Cloudflare
 
 Les données sont stockées chez l'hébergeur (Cloudflare KV ou Netlify Blobs), avec une copie automatique par jour.
 
-## Mise en ligne sur Cloudflare Pages (gratuit)
+## Mise en ligne sur Cloudflare Workers (gratuit, utilisé actuellement)
+
+`wrangler.jsonc` et `worker.js` décrivent tout : appli dans `public/`, API dans `/api/*`, stockage KV `montres`.
+Le Worker « montres-revente » est relié à ce dépôt GitHub et se redéploie à chaque modification.
+Le mot de passe se règle dans **Paramètres > Variables et secrets** du Worker : `APP_PASSWORD`, type **Secret**.
+
+### Veille eBay et Telegram
+
+1. **eBay** : crée un compte gratuit sur developer.ebay.com, puis **Application Keysets** > clés **Production**.
+   Pour activer les clés, eBay demande comment tu gères la suppression des comptes : choisis l'exemption.
+   Ajoute dans le Worker les secrets `EBAY_CLIENT_ID` (App ID) et `EBAY_CLIENT_SECRET` (Cert ID).
+2. **Telegram** : écris à @BotFather, commande `/newbot`, puis ajoute le jeton reçu en secret `TELEGRAM_TOKEN`.
+   Envoie « bonjour » à ton bot, puis clique sur **Relier Telegram** dans l'onglet Bonnes affaires.
+
+### Extension Chrome
+
+`chrome://extensions` > **Mode développeur** > **Charger l'extension non empaquetée** > dossier `extension`.
+Clique sur l'icône de l'extension et renseigne l'adresse de l'outil et ton mot de passe.
+`extension/analyse.mjs` est une copie de `lib/analyse.mjs` : garder les deux identiques.
+
+## Mise en ligne sur Cloudflare Pages (alternative)
 
 1. Dans Cloudflare, **Storage & Databases > KV** : crée un espace de noms `montres`.
 2. **Workers & Pages > Create > Pages > Connect to Git** : choisis ce dépôt GitHub.

@@ -1,4 +1,4 @@
-import { MODELES, liensRecherche } from "./modeles.js";
+import { MODELES, liensRecherche, surveillanceDepuisModele } from "./modeles.js";
 
 const STATUTS = ["En stock", "En réparation", "En vente", "Vendue"];
 const PAIEMENTS = ["Espèces", "Virement", "Carte", "Chèque", "Via la plateforme"];
@@ -14,6 +14,8 @@ const REGLAGES_DEFAUT = {
   cotisations: 12.3,
   margeCible: 30,
   prochainNumero: 1,
+  surveillances: [],
+  veille: { margeMin: 20, plateformeRevente: "Vinted" },
 };
 
 let donnees = { montres: [], reglages: structuredClone(REGLAGES_DEFAUT) };
@@ -104,6 +106,7 @@ async function connexion(mdp) {
   $("#ecran-login").hidden = true;
   $("#app").hidden = false;
   afficherTout();
+  chargerVeille();
 }
 
 // ---------- Navigation ----------
@@ -115,6 +118,7 @@ function changerOnglet(nom) {
 }
 
 function afficherTout() {
+  afficherAffaires();
   afficherTableau();
   afficherCalcul();
   afficherStock();
@@ -464,6 +468,182 @@ function afficherRegistre() {
     ]);
 }
 
+// ---------- Bonnes affaires (veille eBay) ----------
+
+let etatVeille = null;
+
+async function chargerVeille() {
+  try {
+    etatVeille = await api("veille");
+  } catch (e) {
+    etatVeille = { erreur: e.message, alertes: [] };
+  }
+  afficherAffaires();
+}
+
+function depuis(iso) {
+  if (!iso) return "jamais";
+  const min = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  if (min < 1440) return `il y a ${Math.round(min / 60)} h`;
+  return new Date(iso).toLocaleDateString("fr-FR");
+}
+
+function afficherAffaires() {
+  const r = donnees.reglages;
+  const v = r.veille;
+  const e = etatVeille;
+  const ok = (b) => (b ? `<span class="positif">✓</span>` : `<span class="negatif">✗</span>`);
+  const statut = !e
+    ? `<p class="discret">Chargement…</p>`
+    : e.erreur
+      ? `<p class="erreur">${esc(e.erreur)}</p>`
+      : `<div class="resultat" style="grid-template-columns:auto 1fr">
+          ${ok(e.ebayConfigure)}<span>Accès eBay ${e.ebayConfigure ? "configuré" : "à configurer (secrets EBAY_CLIENT_ID et EBAY_CLIENT_SECRET)"}</span>
+          ${ok(e.telegramConfigure && e.telegramRelie)}<span>Telegram ${!e.telegramConfigure ? "à configurer (secret TELEGRAM_TOKEN)" : e.telegramRelie ? "relié à ton téléphone" : "pas encore relié : envoie « bonjour » à ton bot puis clique sur « Relier Telegram »"}</span>
+          ${ok(r.surveillances.some((s) => s.active !== false))}<span>${r.surveillances.filter((s) => s.active !== false).length} modèle(s) surveillé(s)</span>
+          <span>🕑</span><span>Dernière recherche : ${depuis(e.dernierPassage)}${e.dernierResultat ? ` (${e.dernierResultat.nouvelles} bonne(s) affaire(s), ${e.dernierResultat.notifiees} notification(s))` : ""}</span>
+          ${(e.dernierResultat?.erreurs || []).map((x) => `<span>⚠</span><span class="erreur">${esc(x)}</span>`).join("")}
+        </div>`;
+
+  const alertes = e?.alertes || [];
+  $("#affaires").innerHTML = `
+    <h2>Bonnes affaires</h2>
+    <p class="discret">Toutes les 15 minutes, l'outil cherche sur eBay les nouvelles annonces des modèles que tu surveilles et te prévient sur Telegram quand la marge dépasse ${euros(v.margeMin)}.</p>
+    <div class="carte">${statut}
+      <div class="actions">
+        <button id="aff-lancer">Chercher maintenant</button>
+        <button class="secondaire" id="aff-telegram">Relier Telegram</button>
+        <span id="aff-message" class="discret"></span>
+      </div>
+    </div>
+
+    <h3>Annonces trouvées</h3>
+    ${
+      alertes.length
+        ? `<div class="grille" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">${alertes
+            .map(
+              (a) => `<a class="carte" href="${esc(a.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;margin:0">
+                ${a.image ? `<img src="${esc(a.image)}" alt="" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px">` : ""}
+                <div style="margin-top:8px"><strong>${esc(a.modele)}</strong>${a.enchere ? ` <span class="badge reparation">enchère</span>` : ""}</div>
+                <div class="discret">${esc(a.titre)}</div>
+                <div class="resultat" style="margin-top:8px">
+                  <span>Prix</span><span>${euros(a.prix)}${a.port ? ` + ${euros(a.port)}` : ""}</span>
+                  <span>Revente estimée</span><span>${euros(a.prixRevente)}</span>
+                  <span class="total">Marge</span><span class="total positif">${euros(a.marge)}</span>
+                </div>
+                <div class="discret">${depuis(a.trouveeLe)}</div>
+              </a>`
+            )
+            .join("")}</div>`
+        : `<div class="carte"><p class="discret">Aucune bonne affaire pour l'instant. Ajoute des modèles à surveiller ci-dessous.</p></div>`
+    }
+
+    <h3>Modèles surveillés</h3>
+    <p class="discret">Mots-clés : tous doivent être dans le titre de l'annonce. Prix de revente estimé : ce que tu penses revendre la montre (vérifie les ventes terminées eBay). Prix max : on ignore les annonces plus chères.</p>
+    <div class="carte tableau-defile"><table>
+      <thead><tr><th>Actif</th><th>Nom</th><th>Mots-clés</th><th>Mots exclus</th><th>Revente estimée (€)</th><th>Prix max (€)</th><th></th></tr></thead>
+      <tbody>${r.surveillances
+        .map(
+          (s, i) => `<tr>
+            <td><input type="checkbox" data-s="${i}" data-k="active" ${s.active !== false ? "checked" : ""} style="width:auto"></td>
+            <td><input data-s="${i}" data-k="nom" value="${esc(s.nom)}"></td>
+            <td><input data-s="${i}" data-k="motsCles" value="${esc(s.motsCles)}"></td>
+            <td><input data-s="${i}" data-k="exclus" value="${esc(s.exclus)}" placeholder="ex. homme, quartz"></td>
+            <td><input data-s="${i}" data-k="prixRevente" inputmode="decimal" value="${s.prixRevente ?? ""}"></td>
+            <td><input data-s="${i}" data-k="prixMax" inputmode="decimal" value="${s.prixMax ?? ""}"></td>
+            <td><button class="danger" data-suppr-s="${i}">✕</button></td>
+          </tr>`
+        )
+        .join("")}</tbody></table>
+      <div class="actions">
+        <button class="secondaire" id="aff-ajout">+ Ajouter un modèle</button>
+        ${r.surveillances.length ? "" : `<button id="aff-recommandes">Ajouter les ${MODELES.length} modèles recommandés</button>`}
+      </div>
+    </div>
+
+    <h3>Réglages de la veille</h3>
+    <div class="carte form-grille">
+      <label>Marge nette minimum pour être prévenu (€) <input id="aff-marge" inputmode="decimal" value="${v.margeMin}"></label>
+      <label>Plateforme où tu revends <select id="aff-plateforme">${r.plateformes
+        .map((p) => `<option ${p.nom === v.plateformeRevente ? "selected" : ""}>${esc(p.nom)}</option>`)
+        .join("")}</select></label>
+      <label>Mots qui écartent une annonce (séparés par des virgules) <input id="aff-exclus" value="${esc(v.exclus ?? "replica, réplique, copie, fake, pour pièces, hs, ne fonctionne pas, boîte seule, boite seule, bracelet seul, lot de")}"></label>
+    </div>`;
+
+  const message = (t, classe = "discret") => {
+    const el = $("#aff-message");
+    el.className = classe;
+    el.textContent = t;
+  };
+  $("#aff-lancer").onclick = async (ev) => {
+    ev.target.disabled = true;
+    message("Recherche en cours…");
+    try {
+      // On enregistre d'abord les modèles surveillés, pour que la recherche utilise la dernière version.
+      clearTimeout(minuterie);
+      await api("donnees", { method: "PUT", body: JSON.stringify(donnees) });
+      const { resultat } = await api("veille/lancer", { method: "POST" });
+      await chargerVeille();
+      message(`${resultat.nouvelles} bonne(s) affaire(s) trouvée(s).`, "positif");
+    } catch (err) {
+      message(err.message, "erreur");
+      ev.target.disabled = false;
+    }
+  };
+  $("#aff-telegram").onclick = async () => {
+    message("Connexion à Telegram…");
+    try {
+      await api("telegram/detecter", { method: "POST" });
+      await chargerVeille();
+      message("Telegram relié : tu as dû recevoir un message de confirmation.", "positif");
+    } catch (err) {
+      message(err.message, "erreur");
+    }
+  };
+  const sec = $("#affaires");
+  sec.querySelectorAll("[data-s]").forEach((inp) => {
+    inp.onchange = () => {
+      const s = r.surveillances[inp.dataset.s];
+      const k = inp.dataset.k;
+      s[k] = k === "active" ? inp.checked : ["prixRevente", "prixMax"].includes(k) ? num(inp.value) : inp.value.trim();
+      sauvegarder();
+    };
+  });
+  sec.querySelectorAll("[data-suppr-s]").forEach((b) => {
+    b.onclick = () => {
+      r.surveillances.splice(b.dataset.supprS, 1);
+      sauvegarder();
+      afficherAffaires();
+    };
+  });
+  $("#aff-ajout").onclick = () => {
+    r.surveillances.push({ id: crypto.randomUUID(), nom: "", motsCles: "", exclus: "", prixRevente: 0, prixMax: 0, active: true });
+    sauvegarder();
+    afficherAffaires();
+  };
+  if ($("#aff-recommandes")) {
+    $("#aff-recommandes").onclick = () => {
+      r.surveillances.push(...MODELES.map(surveillanceDepuisModele));
+      sauvegarder();
+      afficherAffaires();
+    };
+  }
+  $("#aff-marge").onchange = (ev) => {
+    v.margeMin = num(ev.target.value);
+    sauvegarder();
+  };
+  $("#aff-plateforme").onchange = (ev) => {
+    v.plateformeRevente = ev.target.value;
+    sauvegarder();
+  };
+  $("#aff-exclus").onchange = (ev) => {
+    v.exclus = ev.target.value;
+    sauvegarder();
+  };
+}
+
 // ---------- Modèles recherchés ----------
 
 function afficherModeles() {
@@ -480,7 +660,8 @@ function afficherModeles() {
           <td>${esc(m.conseil)}</td>
           <td><div class="liens">${Object.entries(liensRecherche(`${m.marque} ${m.ref}`))
             .map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener">${n}</a>`)
-            .join("")}<button class="secondaire" data-modele="${i}" style="padding:2px 8px;font-size:0.8rem">Calculer</button></div></td>
+            .join("")}<button class="secondaire" data-modele="${i}" style="padding:2px 8px;font-size:0.8rem">Calculer</button>
+            <button class="secondaire" data-surveiller="${i}" style="padding:2px 8px;font-size:0.8rem">Surveiller</button></div></td>
         </tr>`
       ).join("")}</tbody></table></div>
     <div class="carte"><h3>Avant chaque achat</h3><ul>
@@ -497,6 +678,15 @@ function afficherModeles() {
       f.querySelector("[name=achat]").value = m.achat[1];
       f.querySelector("[name=revente]").value = Math.round((m.revente[0] + m.revente[1]) / 2);
       f.dispatchEvent(new Event("input"));
+    };
+  });
+  document.querySelectorAll("#modeles [data-surveiller]").forEach((b) => {
+    b.onclick = () => {
+      donnees.reglages.surveillances.push(surveillanceDepuisModele(MODELES[b.dataset.surveiller]));
+      sauvegarder();
+      afficherAffaires();
+      b.textContent = "Surveillé ✓";
+      b.disabled = true;
     };
   });
 }
@@ -617,7 +807,7 @@ $("#form-login").onsubmit = async (e) => {
   if (enregistre) {
     try {
       await connexion(enregistre);
-      changerOnglet(relire("montres-onglet") || "tableau");
+      changerOnglet(relire("montres-onglet") || "affaires");
       return;
     } catch {}
   }

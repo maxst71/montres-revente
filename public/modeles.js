@@ -33,3 +33,18 @@ export function liensRecherche(texte) {
     Chrono24: `https://www.chrono24.fr/search/index.htm?query=${q}`,
   };
 }
+
+// Surveillance eBay proposée pour un modèle : on vise le milieu de la fourchette de revente
+// et on ignore les annonces au-dessus du prix d'achat maximum.
+export function surveillanceDepuisModele(m) {
+  const motsCles = m.ref.toLowerCase().includes(m.marque.toLowerCase()) ? m.ref : `${m.marque} ${m.ref}`;
+  return {
+    id: crypto.randomUUID(),
+    nom: `${m.marque} ${m.modele}`,
+    motsCles,
+    exclus: "",
+    prixRevente: Math.round((m.revente[0] + m.revente[1]) / 2),
+    prixMax: m.achat[1],
+    active: true,
+  };
+}
