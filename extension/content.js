@@ -1,5 +1,6 @@
 // Sur une annonce Vinted, Leboncoin ou eBay : reconnaît le modèle parmi tes surveillances,
 // tient compte de l'état, enregistre l'annonce dans ta base et affiche la marge possible.
+// Sur les pages de résultats, apprend aussi les prix de toutes les montres affichées.
 (() => {
   const PAGES_ANNONCE = [/vinted\.fr\/items\/\d+/, /leboncoin\.fr\/(ad\/|.*\d+\.htm)/, /ebay\.fr\/itm\//];
   const SELECTEURS_PRIX = ['[data-testid="item-price"]', '[data-qa-id="adview_price"]', ".x-price-primary", '[itemprop="price"]'];
@@ -67,8 +68,9 @@
     if (!enreg) return `<p class="discret">⚠ Annonce non enregistrée dans ta base.</p>`;
     const s = enreg.stats;
     const observe = s?.n
-      ? `<div class="ligne"><span>Prix observé (${s.n} annonce${s.n > 1 ? "s" : ""})</span><span>${euros(s.mediane)}</span></div>
-         <p class="discret">De ${euros(s.min)} à ${euros(s.max)} dans les annonces que tu as vues.</p>`
+      ? `<div class="ligne"><span>Prix habituel (${s.n} annonce${s.n > 1 ? "s" : ""})</span><span>${euros(s.mediane)}</span></div>
+         ${s.n >= 4 ? `<div class="ligne"><span>Prix bas / haut courants</span><span>${euros(s.bas)} / ${euros(s.haut)}</span></div>` : ""}
+         <p class="discret">De ${euros(s.min)} à ${euros(s.max)} dans les annonces vues (équivalent bon état).</p>`
       : "";
     return `${observe}<p class="discret">✓ ${enreg.dejaVue ? "Déjà vue, mise à jour" : "Enregistrée"} dans ta base (${enreg.total} annonces).</p>`;
   }
@@ -200,6 +202,141 @@
       couleur
     );
   }
+
+  // ---------- Apprentissage en naviguant ----------
+  // Sur les pages de résultats (et les suggestions sous une annonce), lit chaque vignette de montre
+  // (titre, prix, état) et l'envoie par paquets dans ta base de prix. Les vignettes intéressantes
+  // reçoivent une étiquette : bonne marge, ou prix nettement sous ce que tu as déjà vu pour cette référence.
+  const LIENS_ANNONCE = {
+    vinted: /\/items\/(\d+)/,
+    leboncoin: /\/ad\/[^/]+\/(\d+)|\/(\d{8,})\.htm/,
+    ebay: /\/itm\/(?:[^/?]+\/)?(\d{9,})/,
+  };
+  const MOTS_MONTRE = /montre|watch|chrono|horlog|automatique|quartz|plong|diver/i;
+  // Montant suivi de € ou précédé de EUR, sans passer à la ligne (sinon « PRX 40 ⏎ 210 € » donnerait 40 210 €).
+  const PRIX_VIGNETTE = /(\d[\d   .]*(?:,\d{1,2})?)[   ]*(?:€|EUR)|EUR[   ]*(\d[\d   .]*(?:,\d{1,2})?)/;
+  const SELECTEURS_PRIX_VIGNETTE = '[data-test-id="price"], [data-qa-id="aditem_price"], .s-item__price, .s-card__price, [data-testid$="price-text"]';
+  const vignettesLues = new Set();
+  const enAttente = [];
+  let reglagesScan = null;
+  let apprises = 0;
+  let envoiPrevu = null;
+
+  const site = () => Object.keys(LIENS_ANNONCE).find((nom) => location.hostname.includes(nom));
+  const idDe = (href) => href.match(LIENS_ANNONCE[site()])?.slice(1).find(Boolean) || "";
+
+  // Remonte depuis le lien jusqu'au bloc qui contient toute la vignette, sans englober une autre annonce.
+  function vignette(lien) {
+    let el = lien;
+    while (el.parentElement && el.parentElement !== document.body) {
+      const parent = el.parentElement;
+      const ids = new Set([...parent.querySelectorAll("a[href]")].map((x) => idDe(x.href)).filter(Boolean));
+      if (ids.size > 1 || (parent.innerText || "").length > 700) break;
+      el = parent;
+    }
+    return el;
+  }
+
+  // Renvoie null tant que la vignette n'est pas chargée, { annonce: null } si ce n'est pas une montre reconnue.
+  function lireVignette(lien, bloc) {
+    const texteBloc = bloc.innerText || "";
+    // Vinted résume la vignette dans le titre du lien : « Titre, marque: X, état: Y, 45,00 € ».
+    const infos = lien.getAttribute("title") || lien.getAttribute("aria-label") || "";
+    const textePrix = bloc.querySelector(SELECTEURS_PRIX_VIGNETTE)?.textContent || "";
+    const trouvePrix = infos.match(PRIX_VIGNETTE) || textePrix.match(PRIX_VIGNETTE) || texteBloc.match(PRIX_VIGNETTE);
+    const prix = trouvePrix ? lirePrix(trouvePrix[1] || trouvePrix[2]) : 0;
+    if (!prix) return null;
+    const marque = infos.match(/marque\s*:\s*([^,]+)/i)?.[1]?.trim() || "";
+    let titre = infos.split(/,\s*(?:marque|état|taille)\s*:/i)[0].replace(PRIX_VIGNETTE, "").replace(/[,\s]+$/, "").trim();
+    titre ||= (bloc.querySelector('[data-test-id="adcard-title"], [data-qa-id="aditem_title"], .s-item__title, .s-card__title, h2, h3')?.textContent || bloc.querySelector("img[alt]")?.alt || "").trim();
+    if (marque && !titre.toLowerCase().includes(marque.toLowerCase())) titre = `${marque} ${titre}`;
+    if (!titre) return null;
+    const ref = analyse.detecterReference(titre);
+    const s = analyse.trouverSurveillance(titre, reglagesScan.surveillances || [], reglagesScan.veille?.exclus ? reglagesScan.veille.exclus.split(",") : analyse.EXCLUS_DEFAUT);
+    const contexte = `${titre} ${lien.href} ${location.href} ${document.title}`;
+    const reconnue = s || (ref.cle && ref.cle !== ref.marque && (ref.reference || MOTS_MONTRE.test(contexte)));
+    if (!reconnue) return { annonce: null };
+    const etatInfos = infos.match(/état\s*:\s*([^,]+)/i)?.[1]?.trim() || "";
+    const etatTexte = analyse.evaluerEtat(texteBloc);
+    const etat = etatInfos || (etatTexte.libelle !== "État non précisé" ? etatTexte.libelle : "");
+    const groupe = s ? s.nom || s.motsCles : ref.cle;
+    return { annonce: { url: lien.href.split("?")[0], plateforme: plateformeCourante(), titre: titre.slice(0, 200), prix, etat, modele: s ? groupe : "" }, surveillance: s, groupe };
+  }
+
+  function etiqueter(lu, st) {
+    const { annonce: a, surveillance: s, bloc } = lu;
+    const { coef } = analyse.evaluerEtat(a.etat || a.titre);
+    const r = reglagesScan;
+    const plateforme = (r.plateformes || []).find((p) => p.nom === (r.veille?.plateformeRevente || "Vinted")) || { pct: 0, fixe: 0 };
+    const seuil = r.veille?.margeMin ?? 20;
+    const revente = s?.prixRevente ? s.prixRevente * coef : st?.n >= 3 ? st.mediane * coef : 0;
+    if (!revente) return;
+    const { marge } = analyse.estimerMarge({ prix: a.prix, port: fraisAchat(a.prix), prixRevente: revente, plateforme, cotisations: r.cotisations || 0 });
+    const ecart = st?.n >= 3 ? Math.round((a.prix / (st.mediane * coef) - 1) * 100) : 0;
+    let texteEtiquette = "";
+    let couleur = "#1e7a46";
+    if (marge >= seuil) texteEtiquette = `✓ ≈ ${euros(marge)} de marge`;
+    else if (ecart <= -25) [texteEtiquette, couleur] = [`Prix bas : ${ecart} %`, "#a45a00"];
+    if (!texteEtiquette) return;
+    const etiquette = document.createElement("div");
+    etiquette.className = "itech-etiquette";
+    etiquette.textContent = texteEtiquette;
+    etiquette.title = `iTech Montres : ${lu.groupe}${st?.n ? `, ${st.n} annonces vues, prix habituel ${euros(st.mediane)}` : ""}`;
+    etiquette.style.cssText = `position:absolute;top:6px;left:6px;z-index:5;background:${couleur};color:#fff;font:700 12px/1.3 system-ui,sans-serif;padding:3px 7px;border-radius:6px;pointer-events:none;box-shadow:0 1px 4px rgb(0 0 0 / .3)`;
+    if (getComputedStyle(bloc).position === "static") bloc.style.position = "relative";
+    bloc.querySelector(".itech-etiquette")?.remove();
+    bloc.appendChild(etiquette);
+  }
+
+  function compteur(total) {
+    let hote = document.getElementById("itech-compteur");
+    if (!hote) {
+      hote = document.createElement("div");
+      hote.id = "itech-compteur";
+      hote.title = "iTech Montres apprend les prix des montres affichées. Clique pour masquer.";
+      hote.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:2147483646;background:#1f5f8b;color:#fff;font:600 12px/1.3 system-ui,sans-serif;padding:6px 10px;border-radius:16px;box-shadow:0 2px 10px rgb(0 0 0 / .25);cursor:pointer";
+      hote.onclick = () => (hote.style.display = "none");
+      document.body.appendChild(hote);
+    }
+    hote.textContent = `⌚ ${apprises} annonce${apprises > 1 ? "s" : ""} apprise${apprises > 1 ? "s" : ""} · ${total} prix dans ta base`;
+  }
+
+  async function envoyerLot() {
+    envoiPrevu = null;
+    const lot = enAttente.splice(0, 100);
+    if (!lot.length) return;
+    const rep = await chrome.runtime.sendMessage({ type: "observations", annonces: lot.map((lu) => lu.annonce) });
+    if (!rep || rep.erreur) return;
+    apprises += rep.nouvelles;
+    compteur(rep.total);
+    rep.resultats.forEach((res, i) => res.groupe && etiqueter(lot[i], rep.stats[res.groupe]));
+    if (enAttente.length) envoiPrevu = setTimeout(envoyerLot, 1500);
+  }
+
+  async function scanner() {
+    if (document.hidden || !site()) return;
+    const { apprendre } = await chrome.storage.local.get("apprendre");
+    if (apprendre === false) return;
+    analyse ||= await import(chrome.runtime.getURL("analyse.mjs"));
+    if (!reglagesScan) {
+      const rep = await chrome.runtime.sendMessage({ type: "reglages" });
+      if (!rep || rep.erreur) return;
+      reglagesScan = rep.reglages;
+    }
+    const ici = idDe(location.href);
+    for (const lien of document.querySelectorAll("a[href]")) {
+      const id = idDe(lien.href);
+      if (!id || id === ici || vignettesLues.has(id)) continue;
+      const bloc = vignette(lien);
+      const lu = lireVignette(lien, bloc);
+      if (!lu) continue; // pas encore chargée : on réessaiera
+      vignettesLues.add(id);
+      if (lu.annonce) enAttente.push({ ...lu, bloc });
+    }
+    if (enAttente.length && !envoiPrevu) envoiPrevu = setTimeout(envoyerLot, enAttente.length >= 30 ? 300 : 4000);
+  }
+
+  setInterval(() => scanner().catch((e) => console.warn("iTech Montres :", e)), 2500);
 
   // Vinted et Leboncoin changent de page sans recharger : on surveille l'adresse.
   setInterval(() => {

@@ -475,20 +475,18 @@ function afficherRegistre() {
 // ---------- Annonces vues (base de connaissance de l'extension) ----------
 
 let consultations = null;
+let references = [];
 
 async function chargerVues() {
   try {
-    consultations = (await api("consultations")).consultations;
+    const [c, r] = await Promise.all([api("consultations"), api("references")]);
+    consultations = c.consultations;
+    references = r.references || [];
   } catch {
     consultations = [];
+    references = [];
   }
   afficherVues();
-}
-
-function mediane(valeurs) {
-  const v = [...valeurs].sort((a, b) => a - b);
-  const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
 
 function afficherVues() {
@@ -497,35 +495,34 @@ function afficherVues() {
     return;
   }
   const filtre = (relire("montres-vues-filtre") || "").toLowerCase();
-  const parModele = new Map();
-  // Même regroupement que le serveur : modèle surveillé, sinon marque + référence détectées.
-  for (const c of consultations) {
-    const groupe = c.modele || (c.cle && c.cle !== c.marque ? c.cle : "");
-    if (!groupe || !c.prix) continue;
-    if (!parModele.has(groupe)) parModele.set(groupe, []);
-    parModele.get(groupe).push(c);
-  }
-  const stats = [...parModele.entries()]
-    .map(([modele, liste]) => {
-      const prix = liste.map((c) => c.prix);
-      const surveillance = donnees.reglages.surveillances.find((s) => (s.nom || s.motsCles) === modele || s.motsCles === modele);
-      return { modele, n: liste.length, med: mediane(prix), min: Math.min(...prix), max: Math.max(...prix), surveillance };
-    })
-    .sort((a, b) => b.n - a.n);
+  // Prix calculés par le serveur à partir des annonces ouvertes et de celles lues sur les pages de résultats.
+  const stats = references
+    .filter((r) => !filtre || r.groupe.toLowerCase().includes(filtre))
+    .slice(0, 300)
+    .map((r) => ({
+      ...r,
+      modele: r.groupe,
+      med: r.mediane,
+      surveillance: donnees.reglages.surveillances.find((s) => (s.nom || s.motsCles) === r.groupe || s.motsCles === r.groupe),
+    }));
+  const totalPrix = references.reduce((n, r) => n + r.n, 0);
   const liste = consultations.filter((c) => !filtre || `${c.titre} ${c.modele}`.toLowerCase().includes(filtre)).slice(0, 200);
 
   $("#vues").innerHTML = `
     <h2>Annonces vues</h2>
-    <p class="discret">Chaque annonce que tu ouvres avec l'extension Chrome est enregistrée ici (${consultations.length} au total). La marque et la référence sont reconnues automatiquement : ta base de références grandit toute seule, avec les prix réellement demandés.</p>
-    <h3>Prix demandés par référence (${stats.length})</h3>
+    <p class="discret">L'extension Chrome apprend toute seule : chaque montre affichée sur une page de résultats Vinted, Leboncoin ou eBay
+    est lue (référence, état, prix) et ajoutée à ta base, sans que tu aies à l'ouvrir. ${totalPrix} prix connus pour ${references.length} références.
+    Les prix sont ramenés à un équivalent « bon état » pour comparer des annonces dans des états différents.</p>
+    <h3>Prix par référence${filtre ? " (filtrés)" : ""}</h3>
+    <div class="actions"><input id="vues-filtre" placeholder="Chercher une référence ou une annonce…" value="${esc(filtre)}" style="max-width:280px"></div>
     ${
       stats.length
         ? `<div class="carte tableau-defile"><table>
-          <thead><tr><th>Modèle</th><th class="nombre">Annonces</th><th class="nombre">Prix médian</th><th class="nombre">Min – max</th><th class="nombre">Ta revente estimée</th><th></th></tr></thead>
+          <thead><tr><th>Référence</th><th class="nombre">Annonces</th><th class="nombre">Prix bas</th><th class="nombre">Prix habituel</th><th class="nombre">Prix haut</th><th class="nombre">Ta revente estimée</th><th></th></tr></thead>
           <tbody>${stats
             .map(
-              (st, i) => `<tr><td>${esc(st.modele)}</td><td class="nombre">${st.n}</td><td class="nombre">${euros(st.med)}</td>
-                <td class="nombre">${euros(st.min)} – ${euros(st.max)}</td>
+              (st, i) => `<tr><td>${esc(st.modele)}</td><td class="nombre">${st.n}</td><td class="nombre">${euros(st.bas)}</td>
+                <td class="nombre"><strong>${euros(st.med)}</strong></td><td class="nombre">${euros(st.haut)}</td>
                 <td class="nombre">${st.surveillance ? euros(st.surveillance.prixRevente) : "—"}</td>
                 <td>${
                   !st.surveillance
@@ -536,11 +533,11 @@ function afficherVues() {
                 }</td></tr>`
             )
             .join("")}</tbody></table>
-          <p class="discret">« Utiliser la médiane » remplace ta revente estimée par le prix médian demandé (à partir de 3 annonces). Les prix demandés sont souvent un peu au-dessus des prix de vente réels.</p></div>`
-        : `<div class="carte"><p class="discret">Pas encore de modèle reconnu dans tes annonces vues.</p></div>`
+          <p class="discret">Prix bas : un quart des annonces sont en dessous, c'est la zone où acheter. Prix haut : un quart sont au-dessus.
+          « Utiliser la médiane » remplace ta revente estimée par le prix habituel (à partir de 3 annonces). Les prix demandés sont souvent un peu au-dessus des prix de vente réels.</p></div>`
+        : `<div class="carte"><p class="discret">Pas encore de référence reconnue. Navigue sur Vinted, Leboncoin ou eBay avec l'extension : la base se remplit toute seule.</p></div>`
     }
-    <h3>Dernières annonces</h3>
-    <div class="actions"><input id="vues-filtre" placeholder="Filtrer…" value="${esc(filtre)}" style="max-width:280px"></div>
+    <h3>Dernières annonces ouvertes (${consultations.length})</h3>
     ${
       liste.length
         ? `<div class="carte tableau-defile"><table>

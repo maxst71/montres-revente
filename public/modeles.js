@@ -277,7 +277,7 @@ export const MODELES = [
   { marque: "Baltic", modele: "Bicompax / Aquascaphe", ref: "Baltic", achat: [350, 450], revente: [470, 580], conseil: "Micro-marque française, se revend très bien." },
   { marque: "Kelton", modele: "Vintage", ref: "Kelton", achat: [10, 25], revente: [30, 50], conseil: "Mécaniques simples, nostalgie française." },
   { marque: "Dodane", modele: "Type 21", ref: "Dodane Type 21", achat: [1400, 1800], revente: [1900, 2400], conseil: "Montée en gamme militaire française." },
-  { marque: "Pequignot", modele: "Rhabilleuse", ref: "Pequignot", achat: [350, 450], revente: [470, 600], conseil: "Micro-marque française." },
+  { marque: "Pequignet", modele: "Rhabilleuse", ref: "Pequignet", achat: [350, 450], revente: [470, 600], conseil: "Micro-marque française." },
   // Allemandes et microbrands
   { marque: "Laco", modele: "Augsburg / Aachen", ref: "Laco", achat: [250, 330], revente: [350, 450], conseil: "Pilote allemande abordable." },
   { marque: "Stowa", modele: "Flieger", ref: "Stowa Flieger", achat: [450, 600], revente: [620, 780], conseil: "Délai d'attente neuf : revente facile." },

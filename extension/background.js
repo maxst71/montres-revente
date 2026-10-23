@@ -32,6 +32,8 @@ chrome.runtime.onMessage.addListener((message, _expediteur, repondre) => {
     reglages: () => reglagesOutil(message.forcer).then((reglages) => ({ reglages })),
     // Enregistre l'annonce consultée dans la base de l'outil et renvoie les prix observés du modèle.
     consultation: () => envoyer("consultations", message.fiche),
+    // Annonces lues sur les pages de résultats, envoyées par paquets.
+    observations: () => envoyer("observations", { annonces: message.annonces }),
     surveiller: () => envoyer("surveillances", message.surveillance).then((r) => ((cache = null), r)),
   };
   if (!actions[message.type]) return false;
