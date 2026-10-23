@@ -3,7 +3,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { handle } from "./netlify/functions/api.mjs";
+import { handle } from "./lib/api.mjs";
 
 const memoire = new Map();
 const store = {
@@ -23,7 +23,7 @@ createServer(async (req, res) => {
       headers: req.headers,
       body: ["GET", "HEAD"].includes(req.method) ? undefined : Buffer.concat(chunks),
     });
-    const r = await handle(request, store);
+    const r = await handle(request, store, process.env.APP_PASSWORD);
     res.writeHead(r.status, Object.fromEntries(r.headers));
     return res.end(await r.text());
   }

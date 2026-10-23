@@ -1,6 +1,6 @@
 # iTech Montres
 
-Outil personnel de gestion d'achat-revente de montres, hébergé sur Netlify.
+Outil personnel de gestion d'achat-revente de montres. Fonctionne sur Cloudflare Pages ou sur Netlify.
 
 - **Tableau de bord** : bénéfice du mois, stock, argent immobilisé, délai de revente.
 - **Calculateur** : est-ce que cette montre vaut le coup, et à quel prix maximum l'acheter.
@@ -9,7 +9,17 @@ Outil personnel de gestion d'achat-revente de montres, hébergé sur Netlify.
 - **Modèles** : montres recherchées à petit budget, avec liens vers les ventes terminées eBay, Vinted, Leboncoin et Chrono24.
 - **Réglages** : frais des plateformes, cotisations URSSAF, sauvegarde.
 
-Les données sont stockées dans Netlify Blobs (rien d'autre à créer), avec une copie automatique par jour.
+Les données sont stockées chez l'hébergeur (Cloudflare KV ou Netlify Blobs), avec une copie automatique par jour.
+
+## Mise en ligne sur Cloudflare Pages (gratuit)
+
+1. Dans Cloudflare, **Storage & Databases > KV** : crée un espace de noms `montres`.
+2. **Workers & Pages > Create > Pages > Connect to Git** : choisis ce dépôt GitHub.
+   - Framework preset : None. Build command : vide. Build output directory : `public`.
+3. Dans le projet, **Settings > Variables and Secrets** : ajoute `APP_PASSWORD` (type Secret).
+4. **Settings > Bindings > Add > KV namespace** : nom de variable `MONTRES`, espace de noms `montres`.
+5. **Deployments** : relance le dernier déploiement pour prendre en compte les réglages.
+6. **Custom domains** : ajoute itechstation.fr et suis les indications DNS (chez Ionos).
 
 ## Mise en ligne sur Netlify
 
