@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "iTech Montres – Analyser",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Affiche sur les annonces Vinted, Leboncoin et eBay le modèle reconnu, le prix de revente estimé et la marge.",
   "permissions": ["storage"],
   "host_permissions": ["https://*.workers.dev/*", "https://itechstation.fr/*", "https://*.itechstation.fr/*"],

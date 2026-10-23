@@ -26,6 +26,7 @@ let motDePasse = "";
 const $ = (sel, racine = document) => racine.querySelector(sel);
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const normaliser = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 const num = (v) => {
   const n = parseFloat(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
@@ -497,15 +498,17 @@ function afficherVues() {
   }
   const filtre = (relire("montres-vues-filtre") || "").toLowerCase();
   const parModele = new Map();
+  // Même regroupement que le serveur : modèle surveillé, sinon marque + référence détectées.
   for (const c of consultations) {
-    if (!c.modele || !c.prix) continue;
-    if (!parModele.has(c.modele)) parModele.set(c.modele, []);
-    parModele.get(c.modele).push(c);
+    const groupe = c.modele || (c.cle && c.cle !== c.marque ? c.cle : "");
+    if (!groupe || !c.prix) continue;
+    if (!parModele.has(groupe)) parModele.set(groupe, []);
+    parModele.get(groupe).push(c);
   }
   const stats = [...parModele.entries()]
     .map(([modele, liste]) => {
       const prix = liste.map((c) => c.prix);
-      const surveillance = donnees.reglages.surveillances.find((s) => (s.nom || s.motsCles) === modele);
+      const surveillance = donnees.reglages.surveillances.find((s) => (s.nom || s.motsCles) === modele || s.motsCles === modele);
       return { modele, n: liste.length, med: mediane(prix), min: Math.min(...prix), max: Math.max(...prix), surveillance };
     })
     .sort((a, b) => b.n - a.n);
@@ -513,8 +516,8 @@ function afficherVues() {
 
   $("#vues").innerHTML = `
     <h2>Annonces vues</h2>
-    <p class="discret">Chaque annonce que tu ouvres avec l'extension Chrome est enregistrée ici (${consultations.length} au total). Ça te donne les prix réellement demandés pour chaque modèle.</p>
-    <h3>Prix demandés par modèle</h3>
+    <p class="discret">Chaque annonce que tu ouvres avec l'extension Chrome est enregistrée ici (${consultations.length} au total). La marque et la référence sont reconnues automatiquement : ta base de références grandit toute seule, avec les prix réellement demandés.</p>
+    <h3>Prix demandés par référence (${stats.length})</h3>
     ${
       stats.length
         ? `<div class="carte tableau-defile"><table>
@@ -524,7 +527,13 @@ function afficherVues() {
               (st, i) => `<tr><td>${esc(st.modele)}</td><td class="nombre">${st.n}</td><td class="nombre">${euros(st.med)}</td>
                 <td class="nombre">${euros(st.min)} – ${euros(st.max)}</td>
                 <td class="nombre">${st.surveillance ? euros(st.surveillance.prixRevente) : "—"}</td>
-                <td>${st.surveillance && st.n >= 3 ? `<button class="secondaire" data-mediane="${i}" style="padding:2px 8px;font-size:0.8rem">Utiliser la médiane</button>` : ""}</td></tr>`
+                <td>${
+                  !st.surveillance
+                    ? `<button class="secondaire" data-surveiller-vue="${i}" style="padding:2px 8px;font-size:0.8rem">Surveiller</button>`
+                    : st.n >= 3
+                      ? `<button class="secondaire" data-mediane="${i}" style="padding:2px 8px;font-size:0.8rem">Utiliser la médiane</button>`
+                      : ""
+                }</td></tr>`
             )
             .join("")}</tbody></table>
           <p class="discret">« Utiliser la médiane » remplace ta revente estimée par le prix médian demandé (à partir de 3 annonces). Les prix demandés sont souvent un peu au-dessus des prix de vente réels.</p></div>`
@@ -559,6 +568,15 @@ function afficherVues() {
       champ.setSelectionRange(champ.value.length, champ.value.length);
     }, 300);
   };
+  document.querySelectorAll("#vues [data-surveiller-vue]").forEach((b) => {
+    b.onclick = () => {
+      const st = stats[b.dataset.surveillerVue];
+      donnees.reglages.surveillances.push({ id: crypto.randomUUID(), nom: st.modele, motsCles: st.modele, exclus: "", prixRevente: Math.round(st.med), prixMax: 0, active: true });
+      sauvegarder();
+      afficherVues();
+      afficherAffaires();
+    };
+  });
   document.querySelectorAll("#vues [data-mediane]").forEach((b) => {
     b.onclick = () => {
       const st = stats[b.dataset.mediane];
@@ -752,12 +770,22 @@ function afficherAffaires() {
 
 function afficherModeles() {
   $("#modeles").innerHTML = `
-    <h2>Modèles recherchés à petit budget</h2>
+    <h2>Modèles recherchés (${MODELES.length})</h2>
     <p class="discret">Fourchettes indicatives d'occasion en bon état. Vérifie toujours les ventes terminées eBay avant d'acheter.</p>
+    <div class="carte" style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="mod-filtre" placeholder="Chercher une marque, un modèle…" style="flex:1;min-width:180px">
+      <select id="mod-budget">
+        <option value="0">Tous les budgets</option>
+        <option value="50">Achat jusqu'à 50 €</option>
+        <option value="100">Achat jusqu'à 100 €</option>
+        <option value="200">Achat jusqu'à 200 €</option>
+        <option value="500">Achat jusqu'à 500 €</option>
+      </select>
+    </div>
     <div class="carte tableau-defile"><table>
       <thead><tr><th>Modèle</th><th class="nombre">Achat</th><th class="nombre">Revente</th><th>À savoir</th><th>Chercher</th></tr></thead>
       <tbody>${MODELES.map(
-        (m, i) => `<tr>
+        (m, i) => `<tr data-texte="${esc(normaliser(`${m.marque} ${m.modele} ${m.ref}`))}" data-achat="${m.achat[0]}">
           <td><strong>${esc(m.marque)}</strong> ${esc(m.modele)}</td>
           <td class="nombre">${m.achat[0]}–${m.achat[1]} €</td>
           <td class="nombre">${m.revente[0]}–${m.revente[1]} €</td>
@@ -774,6 +802,15 @@ function afficherModeles() {
       <li>Préfère le paiement via la plateforme (protection acheteur) ou la remise en main propre.</li>
       <li>Note l'identité du vendeur pour le registre de police.</li>
     </ul></div>`;
+  const filtrer = () => {
+    const mots = normaliser($("#mod-filtre").value).split(" ").filter(Boolean);
+    const budget = num($("#mod-budget").value);
+    document.querySelectorAll("#modeles tbody tr").forEach((tr) => {
+      tr.hidden = !mots.every((m) => tr.dataset.texte.includes(m)) || (budget > 0 && num(tr.dataset.achat) > budget);
+    });
+  };
+  $("#mod-filtre").oninput = filtrer;
+  $("#mod-budget").onchange = filtrer;
   document.querySelectorAll("#modeles [data-modele]").forEach((b) => {
     b.onclick = () => {
       const m = MODELES[b.dataset.modele];
@@ -889,6 +926,21 @@ function afficherReglages() {
 // ---------- Démarrage ----------
 
 document.querySelectorAll("#onglets button").forEach((b) => (b.onclick = () => changerOnglet(b.dataset.onglet)));
+
+// L'extension peut ajouter des modèles surveillés pendant que l'outil est ouvert : on recharge au retour sur l'onglet,
+// sauf si un enregistrement est en attente.
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !motDePasse || $("#etat-sauvegarde").textContent === "Enregistrement…") return;
+  try {
+    const { data } = await api("donnees");
+    if (data) {
+      donnees = data;
+      donnees.reglages = { ...structuredClone(REGLAGES_DEFAUT), ...data.reglages };
+      afficherTout();
+      chargerVues();
+    }
+  } catch {}
+});
 document.addEventListener("click", (e) => {
   const cible = e.target.closest("[data-aller]");
   if (cible) changerOnglet(cible.dataset.aller);

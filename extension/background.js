@@ -16,13 +16,12 @@ async function reglagesOutil(forcer = false) {
   return cache;
 }
 
-// Enregistre l'annonce consultée dans la base de l'outil et renvoie les prix observés du modèle.
-async function enregistrerConsultation(fiche) {
+async function envoyer(chemin, corps) {
   const { adresse, motDePasse } = await chrome.storage.local.get(["adresse", "motDePasse"]);
-  const r = await fetch(`${adresse.replace(/\/+$/, "")}/api/consultations`, {
+  const r = await fetch(`${adresse.replace(/\/+$/, "")}/api/${chemin}`, {
     method: "POST",
     headers: { "x-password": motDePasse, "content-type": "application/json" },
-    body: JSON.stringify(fiche),
+    body: JSON.stringify(corps),
   });
   if (!r.ok) throw new Error(`Enregistrement impossible (${r.status}).`);
   return r.json();
@@ -31,7 +30,9 @@ async function enregistrerConsultation(fiche) {
 chrome.runtime.onMessage.addListener((message, _expediteur, repondre) => {
   const actions = {
     reglages: () => reglagesOutil(message.forcer).then((reglages) => ({ reglages })),
-    consultation: () => enregistrerConsultation(message.fiche),
+    // Enregistre l'annonce consultée dans la base de l'outil et renvoie les prix observés du modèle.
+    consultation: () => envoyer("consultations", message.fiche),
+    surveiller: () => envoyer("surveillances", message.surveillance).then((r) => ((cache = null), r)),
   };
   if (!actions[message.type]) return false;
   actions[message.type]()

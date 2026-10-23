@@ -103,6 +103,7 @@
         .verdict { font-weight: 700; color: ${couleur}; margin: 4px 0 8px; }
         .discret { color: #6b6b70; font-size: 12px; }
         a { color: #1f5f8b; }
+        .bouton { display: block; width: 100%; margin: 6px 0; padding: 6px; border: 1px solid #1f5f8b; border-radius: 7px; background: #fff; color: #1f5f8b; cursor: pointer; font: inherit; }
       </style>
       <div class="boite"><div class="titre"><span>⌚ iTech Montres</span><button class="fermer" title="Fermer">✕</button></div>${contenu}</div>`;
     racine.querySelector(".fermer").onclick = () => document.getElementById("itech-montres")?.remove();
@@ -135,11 +136,37 @@
 
     if (!s) {
       const enreg = await enregistrer(fiche);
-      afficher(`<p>Modèle non reconnu parmi tes ${surveillances.length} modèles surveillés.</p>
-        <div class="ligne"><span>État</span><span>${evalEtat.libelle}</span></div>
+      const st = enreg?.stats;
+      const groupe = enreg?.groupe;
+      let estimation = "";
+      // Sans modèle surveillé, on estime avec les prix déjà observés pour la même référence.
+      if (groupe && st?.n >= 3 && prix) {
+        const revente = Math.round(st.mediane * evalEtat.coef);
+        const frais = fraisAchat(prix);
+        const plateforme = (r.plateformes || []).find((p) => p.nom === (r.veille?.plateformeRevente || "Vinted")) || { pct: 0, fixe: 0 };
+        const { marge } = analyse.estimerMarge({ prix, port: frais, prixRevente: revente, plateforme, cotisations: r.cotisations || 0 });
+        estimation = `<div class="ligne"><span>Revente estimée (médiane × état)</span><span>${euros(revente)}</span></div>
+          <div class="ligne total"><span>Bénéfice possible</span><span>${euros(marge)}</span></div>`;
+      }
+      afficher(`<p>${groupe ? `Référence détectée : <b>${groupe}</b>` : "Modèle non reconnu."}</p>
+        <div class="ligne"><span>État</span><span>${evalEtat.libelle}${evalEtat.coef !== 1 ? ` (×${evalEtat.coef})` : ""}</span></div>
         <div class="ligne"><span>Prix annonce</span><span>${prix ? euros(prix) : "?"}</span></div>
+        ${estimation}
         ${ligneBase(enreg)}
-        <a href="${lienVendus(titre)}" target="_blank">Voir les ventes terminées eBay</a>`, "#6b6b70");
+        ${groupe && !estimation ? `<p class="discret">Encore ${Math.max(0, 3 - (st?.n || 0))} annonce(s) de cette référence à voir pour estimer le bénéfice.</p>` : ""}
+        ${groupe ? `<button class="bouton" id="itech-surveiller">Surveiller ${groupe}</button>` : ""}
+        <a href="${lienVendus(groupe || titre)}" target="_blank">Voir les ventes terminées eBay</a>`, "#6b6b70");
+      const bouton = encadre().getElementById("itech-surveiller");
+      if (bouton) {
+        bouton.onclick = async () => {
+          bouton.disabled = true;
+          const rep = await chrome.runtime.sendMessage({
+            type: "surveiller",
+            surveillance: { nom: groupe, motsCles: groupe, prixRevente: st?.n ? Math.round(st.mediane) : 0 },
+          });
+          bouton.textContent = rep?.erreur ? "Erreur : " + rep.erreur : "✓ Ajouté à tes modèles surveillés";
+        };
+      }
       return;
     }
     if (!prix) {
